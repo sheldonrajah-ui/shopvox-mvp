@@ -1,77 +1,126 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import dynamic from 'next/dynamic';
+import { useRef, useState, useEffect } from 'react';
+//import Lottie from 'lottie-react';
+//import braaiAnimation from '../animations/braai-flames.json';  // Add a Lottie file or use placeholder
 
-// Dynamically import the Lottie player ONLY on the client (this kills the document error)
-const Lottie = dynamic(() => import('@lottiefiles/react-lottie-player').then(mod => mod.Player), {
-  ssr: false,
-});
+type Message = { role: 'user' | 'assistant'; content: string };
 
-export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
+type Props = {
+  messages: Message[];
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
+  onClose: () => void;
+};
+
+export default function ShopVoxModal({ messages, setMessages, onClose }: Props) {
   const [isListening, setIsListening] = useState(false);
+  const [cart, setCart] = useState<any[]>([]);
+  const recognitionRef = useRef<any>(null);
+  const [showAnimation, setShowAnimation] = useState(false);
 
-  // Braai master greeting – plays automatically when modal opens
-  useEffect(() => {
-    if ('speechSynthesis' in window) {
-      const utter = new SpeechSynthesisUtterance('Yo yo yo! ShopVox in the house bru! What are we buying today?');
-      utter.rate = 0.95;
-      utter.pitch = 0.9;
-      // Try get a South-African-ish voice
-      const voices = window.speechSynthesis.getVoices();
-      const saVoice = voices.find(v => v.lang.includes('en-ZA') || v.lang.includes('en_AU'));
-      if (saVoice) utter.voice = saVoice;
-      window.speechSynthesis.speak(utter);
+  const sendMessage = async (text: string) => {
+    if (!text.trim()) return;
+    const userMessage: Message = { role: 'user', content: text };
+    setMessages(prev => [...prev, userMessage]);
+
+    const res = await fetch('/api/grok', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [...messages, userMessage] }),
+    });
+
+    // Stream response (add to messages as it comes – stub for now)
+    setMessages(prev => [...prev, { role: 'assistant', content: 'Lekker! Processing your braai...' }]);
+  };
+
+  const startListening = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(t => t.stop());
+    } catch (err: any) {
+      alert('Mic needed – allow in settings!');
+      return;
     }
+
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+    if (!SpeechRecognition) return alert('Voice not supported');
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-ZA';
+
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results).map((r: any) => r[0].transcript).join('');
+      if (event.results[event.results.length - 1].isFinal) {
+        sendMessage(transcript);
+      }
+    };
+
+    recognition.onerror = (e: any) => console.error('Speech error:', e.error);
+    recognition.start();
+    recognitionRef.current = recognition;
+    setIsListening(true);
+  };
+
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    setIsListening(false);
+  };
+
+  const addToCart = (item: any) => {
+    setCart(prev => [...prev, item]);
+    setShowAnimation(true);
+    setTimeout(() => setShowAnimation(false), 2000);
+  };
+
+  useEffect(() => {
+    // Load cart from storage
+    const saved = sessionStorage.getItem('shopvox-cart');
+    if (saved) setCart(JSON.parse(saved));
   }, []);
 
+  useEffect(() => {
+    sessionStorage.setItem('shopvox-cart', JSON.stringify(cart));
+  }, [cart]);
+
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ scale: 0.5, rotate: -20 }}
-          animate={{ scale: 1, rotate: 0 }}
-          exit={{ scale: 0.5, rotate: 20 }}
-          className="relative w-96 max-w-full rounded-3xl bg-white p-8 shadow-2xl"
-          onClick={e => e.stopPropagation()}
-        >
-          {/* Lottie Braai Master – only renders in browser */}
-          <Lottie
-            loop
-            autoplay
-            src="https://lottie.host/your-braai-master-animation.json" // ← replace with real one later
-            style={{ width: '280px', height: '280px', margin: '0 auto' }}
-          />
-
-          <h2 className="mt-6 text-center text-3xl font-black text-orange-600">
-            ShopVox 🔥
-          </h2>
-          <p className="mt-4 text-center text-lg text-gray-700">
-            {isListening ? 'Listening bru… speak now!' : 'Tap the mic & talk to me'}
-          </p>
-
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <button onClick={onClose} className="absolute top-4 right-4 text-white text-4xl">✕</button>
+      <div className="bg-white rounded-2xl p-6 max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto">
+        <div className="space-y-4 mb-4">
+          {messages.map((msg, i) => (
+            <div key={i} className={`p-3 rounded-lg ${msg.role === 'user' ? 'bg-blue-100 ml-auto' : 'bg-gray-100'}`}>
+              {msg.content}
+            </div>
+          ))}
+        </div>
+        <div className="fixed bottom-8 right-8 z-50">
           <button
-            onClick={() => setIsListening(!isListening)}
-            className="mx-auto mt-8 flex h-20 w-20 items-center justify-center rounded-full bg-orange-600 text-5xl text-white shadow-xl active:scale-95"
+            onClick={isListening ? stopListening : startListening}
+            className={`w-20 h-20 rounded-full shadow-2xl flex items-center justify-center text-3xl transition-all ${
+              isListening ? 'bg-red-600 animate-pulse' : 'bg-orange-600'
+            }`}
           >
             {isListening ? '🔴' : '🎤'}
           </button>
-
-          <button
-            onClick={onClose}
-            className="mt-8 block w-full rounded-xl bg-gray-200 py-4 font-bold text-gray-800"
-          >
-            Close
-          </button>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+        </div>
+        {/*showAnimation && (
+          <Lottie animationData={braaiAnimation} loop={false} className="w-32 h-32 mx-auto" />
+        )*/}
+        {cart.length > 0 && (
+          <div className="mt-4 p-4 bg-green-50 rounded">
+            <h3 className="font-bold">Trolley (R{cart.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)})</h3>
+            {cart.map((item, i) => (
+              <div key={i} className="flex justify-between">
+                <span>{item.name} x{item.quantity}</span>
+                <span>R{(item.price * item.quantity).toFixed(2)}</span>
+              </div>
+            ))}
+            <button className="w-full mt-2 bg-green-600 text-white p-2 rounded">Face ID Checkout</button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
