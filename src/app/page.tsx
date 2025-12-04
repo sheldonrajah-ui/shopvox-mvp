@@ -2,23 +2,36 @@
 
 import { useState } from 'react';
 import ShopVoxModal from '@/components/ShopVoxModal';
-import FloatingButton from '@/components/FloatingButton';
 
 export default function Home() {
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [isOpen, setIsOpen] = useState(false);
 
   return (
     <>
-      <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-orange-50 to-white p-8">
+      <div className="min-h-screen bg-gradient-to-br from-orange-50 to-yellow-100 flex items-center justify-center p-8">
         <div className="text-center">
-          <h1 className="text-7xl font-black text-orange-600 mb-6">ShopVox 🔥</h1>
-          <p className="text-2xl text-gray-700">The braai master that closes sales</p>
-          <p className="text-lg text-gray-600 mt-4">Tap the orange button → allow mic → talk to me bru</p>
-        </div>
-      </main>
+          <h1 className="text-5xl font-bold mb-6">ShopVox Demo</h1>
+          <p className="text-xl mb-10">Tap the mic orb and say: "braai for 8 mates"</p>
 
-      <FloatingButton onClick={() => setIsOpen(true)} />
-      {isOpen && <ShopVoxModal onClose={() => setIsOpen(false)} />}
+          {/* Floating Orb Button */}
+          <button
+            onClick={() => setIsOpen(true)}
+            className="fixed bottom-8 right-8 w-20 h-20 bg-orange-600 rounded-full shadow-2xl flex items-center justify-center text-4xl hover:scale-110 transition-all z-40"
+          >
+            🎤
+          </button>
+        </div>
+      </div>
+
+      {/* Modal with ALL required props */}
+      {isOpen && (
+        <ShopVoxModal
+          messages={messages}
+          setMessages={setMessages}
+          onClose={() => setIsOpen(false)}
+        />
+      )}
     </>
   );
 }
