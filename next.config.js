@@ -1,18 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Mic policy only – no i18n, no rewrites, no trailingSlash
   async headers() {
     return [
       {
-        source: '/(.*)',
+        // Narrow source to avoid loop with Vercel HTTPS
+        source: '/api/:path*',
         headers: [
           { key: 'Permissions-Policy', value: 'microphone=(), camera=()' },
         ],
       },
     ];
   },
-  // Removed trailingSlash – this kills 80% of Vercel loops in 2025
-  // Add back later if needed for SEO
-  // trailingSlash: true,
 };
 
 module.exports = nextConfig;
