@@ -22,12 +22,12 @@ export default function Home() {
       </div>
 
       {/* Floating orange mic orb – your signature button */}
-      <button
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-8 right-8 w-20 h-20 bg-orange-600 rounded-full shadow-2xl flex items-center justify-center text-5xl hover:scale-110 transition-all z-50 animate-pulse"
-      >
-        🎤
-      </button>
+     <button
+  onClick={() => setIsOpen(true)}
+  className="fixed bottom-8 right-8 w-20 h-20 bg-orange-600 rounded-full shadow-2xl flex items-center justify-center text-5xl hover:scale-110 transition-all z-50 animate-pulse"
+>
+  🎤
+</button>
 
       {/* The actual voice modal */}
       {isOpen && (
@@ -40,3 +40,5 @@ export default function Home() {
     </main>
   );
 }
+
+
