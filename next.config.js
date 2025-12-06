@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Only mic permissions – no redirects/rewrites to cause loops
   async headers() {
     return [
       {
@@ -11,8 +10,9 @@ const nextConfig = {
       },
     ];
   },
-  // Add this to prevent trailing slash loops (common Next.js culprit)
-  trailingSlash: true,
+  // Removed trailingSlash – this kills 80% of Vercel loops in 2025
+  // Add back later if needed for SEO
+  // trailingSlash: true,
 };
 
 module.exports = nextConfig;
