@@ -1,17 +1,21 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Mic policy only – no i18n, no rewrites, no trailingSlash
+  experimental: {
+    turbopack: {
+      root: './',  // Explicit root = current dir, silences lockfile warning
+    },
+  },
   async headers() {
     return [
       {
-        // Narrow source to avoid loop with Vercel HTTPS
-        source: '/api/:path*',
+        source: '/api/:path*',  // Narrow to API only, avoids global loop with Vercel HTTPS
         headers: [
           { key: 'Permissions-Policy', value: 'microphone=(), camera=()' },
         ],
       },
     ];
   },
+  // No rewrites/redirects/i18n = zero loop fuel
 };
 
 module.exports = nextConfig;
