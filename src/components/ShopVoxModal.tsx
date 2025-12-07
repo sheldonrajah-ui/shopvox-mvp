@@ -41,37 +41,44 @@ export default function ShopVoxModal({ onClose }: Props) {
     };
 
     recognition.onresult = async (event) => {
-      const currentTranscript = Array.from(event.results)
-        .map(result => result[0].transcript)
-        .join('');
-      setTranscript(currentTranscript);
-
-      if (event.results[0].isFinal) {
-        const userMessage = currentTranscript.trim();
-        setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-
-        // Call Grok API
-        try {
-          const res = await fetch('/api/grok', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: userMessage }),
-          });
-          const data = await res.json();
-          const assistantReply = data.reply || "Hmm, didn't quite catch that – try again?";
-
-          setMessages(prev => [...prev, { role: 'assistant', content: assistantReply }]);
-
-          // TEMP: Browser TTS until we add Hume.ai tomorrow
-          const utter = new SpeechSynthesisUtterance(assistantReply);
-          utter.lang = 'en-ZA';
-          utter.rate = 0.9;
-          window.speechSynthesis.speak(utter);
-        } catch (err) {
-          setMessages(prev => [...prev, { role: 'assistant', content: 'Network error – try again?' }]);
-        }
+    let currentTranscript = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+         const result = event.results[i];
+    if (result.isFinal) {
+      // FINAL: Append to chat once, clean
+      const finalText = Array.from(result)
+        .map(alt => alt.transcript)
+        .join(' ');
+      setTranscript(''); // Clear preview
+      setMessages(prev => [...prev, { role: 'user', content: finalText.trim() }]);
+      
+      // Grok ping + TTS (unchanged)
+      try {
+        const res = await fetch('/api/grok', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: finalText.trim() }),
+        });
+        const data = await res.json();
+        const assistantReply = data.reply || "Hmm, didn't quite catch that – try again?";
+        setMessages(prev => [...prev, { role: 'assistant', content: assistantReply }]);
+        
+        const utter = new SpeechSynthesisUtterance(assistantReply);
+        utter.lang = 'en-ZA';
+        utter.rate = 0.9;
+        window.speechSynthesis.speak(utter);
+      } catch (err) {
+        setMessages(prev => [...prev, { role: 'assistant', content: 'Network error – try again?' }]);
       }
-    };
+    } else {
+      // INTERIM: Live preview only (no chat spam) – stitch all non-finals
+      currentTranscript += Array.from(result)
+        .map(alt => alt.transcript)
+        .join(' ');
+      setTranscript(currentTranscript); // Updates preview div
+    }
+  }
+};          
 
     recognition.onend = () => setIsListening(false);
     recognition.start();
@@ -100,11 +107,11 @@ export default function ShopVoxModal({ onClose }: Props) {
           </div>
         )}
 
-        {transcript && !isListening && (
-          <div className="bg-gray-100 p-3 rounded-lg mb-4">
-            <strong>You said:</strong> {transcript}
+        {transcript && (
+          <div className="bg-blue-50 p-3 rounded-lg mb-4 italic text-sm">
+          Live: {transcript}...
           </div>
-        )}
+          )}
 
         <div className="space-y-3 max-h-96 overflow-y-auto">
           {messages.map((msg, i) => (
