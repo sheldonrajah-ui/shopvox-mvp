@@ -1,14 +1,129 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { getProducts } from '@/lib/cache';   
+
+import type { Dispatch, SetStateAction } from 'react';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
 }
 
-export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface Props {
+  messages: Message[];
+  setMessages: Dispatch<SetStateAction<Message[]>>;  
+  onClose: () => void;
+}
+
+
+
+
+
+
+
+
+
+
+
+async function cacheOfflineVoice() {
+  if (localStorage.getItem('offline-voice')) return;
+
+  const text = "No signal bru, here's what I've got saved for you.";
+  const form = new FormData();
+  form.append('action', 'tts');
+  form.append('text', text);
+  form.append('voice_id', 'pNInz6obpgDQGcFmaJgB');
+
+  try {
+    const res = await fetch('/api/eleven', { method: 'POST', body: form });
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    localStorage.setItem('offline-voice', url);
+  } catch (e) {
+    // silently fail – we’ll use browser voice
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Play cached ElevenLabs voice when offline
+function speakOffline(text: string) {
+  const cachedUrl = localStorage.getItem('offline-voice');
+  if (cachedUrl) {
+    new Audio(cachedUrl).play();
+  } else {
+    // Fallback to browser voice (still works offline)
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'en-ZA';
+    speechSynthesis.speak(utter);
+  }
+}
+
+
+
+
+
+
+
+// Run when the phone gets internet again
+useEffect(() => {
+  const handleOnline = () => {
+    console.log("Back online – caching offline voice");
+    cacheOfflineVoice();
+  };
+
+  window.addEventListener('online', handleOnline);
+  
+  // Also try once when component loads (in case already online)
+  if (navigator.onLine) cacheOfflineVoice();
+
+  return () => window.removeEventListener('online', handleOnline);
+}, []);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export default function ShopVoxModal({ messages, setMessages, onClose }: Props) {
+  
   const [isListening, setIsListening] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState('Listening…');
   const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
@@ -17,7 +132,7 @@ export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
   const VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam – great South African-ish voice
 
   const startRecording = async () => {
-    setIsListening(true);
+    setIsListening(true); 
     setLiveTranscript('Listening…');
     setMessages([]); // optional: clear old conversation
 
@@ -25,6 +140,33 @@ export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       const chunks: Blob[] = [];
+
+
+  // ── Silence detection (stops recording after ~1.5 seconds of quiet) ──
+      const audioContext = new AudioContext();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let silenceStart = Date.now();
+
+      const checkSilence = () => {
+        analyser.getByteFrequencyData(dataArray);
+        const volume = dataArray.reduce((a, b) => a + b) / dataArray.length;
+
+        if (volume < 15) { // very quiet
+          if (Date.now() - silenceStart > 1500) { // 1.5 seconds of silence
+            mediaRecorder.stop();
+            return;
+          }
+        } else {
+          silenceStart = Date.now(); // reset timer when speaking
+        }
+        if (mediaRecorder.state === 'recording') requestAnimationFrame(checkSilence);
+      };
+      checkSilence();
 
       mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
 
@@ -46,7 +188,7 @@ export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
         if (!sttData.text?.trim()) {
           setMessages((prev) => [
             ...prev,
-            { role: 'assistant', content: "Sorry bru, didn't catch that – try again?" },
+            { role: 'assistant', content: "Sorry bro, didn't catch that – try again?" },
           ]);
           setIsListening(false);
           stream.getTracks().forEach((t) => t.stop());
@@ -57,19 +199,55 @@ export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
         setLiveTranscript('');
         setMessages((prev) => [...prev, { role: 'user', content: transcript }]);
 
-        // ─────── 2. Grok gets the transcript (and optional accent info) ───────
-        const grokRes = await fetch('/api/grok', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: transcript,
-            metadata: { accent: sttData.language || 'en-ZA' },
-          }),
-        });
-        const { reply } = await grokRes.json();
 
-        setMessages((prev) => [...prev, { role: 'assistant', content: reply || 'Eish, no reply…' }]);
 
+
+        // ─────── 2. Grok gets the transcript ───────
+        let reply = "Eish, something went wrong…";
+
+        try {
+          const grokRes = await fetch('/api/grok', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prompt: transcript,
+              metadata: { accent: sttData.language || 'en-ZA' },
+            }),
+          });
+
+          if (!grokRes.ok) throw new Error('Grok failed');
+
+          const data = await grokRes.json();
+          reply = data.reply || "Didn't quite catch that, bro – try again?";
+        } catch (err) {
+          // ←←←←←←←←←←←← OFFLINE FALLBACK STARTS HERE ←←←←←←←←←←←←
+          console.log('No internet – switching to offline cache');
+          const cached = await getProducts();
+
+          if (cached && cached.length > 0) {
+            reply = `No signal, bro – here’s what I’ve got saved:\n\n` +
+                    cached.slice(0, 4)
+                          .map(p => `• ${p.name} – R${p.price}`)
+                          .join('\n') +
+                    `\n\nI’ll get you the fresh deals when you’re back online!`;
+
+            // Optional: play a real offline voice (see next step)
+            speakOffline(reply);
+          } else {
+            reply = "No signal and no products saved yet – try again when you’re online!";
+          }
+        }
+
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
+      
+        
+        
+        
+        
+        
+        
+        
+        
         // ─────── 3. Secure TTS via our own /api/eleven route ───────
         const ttsForm = new FormData();
         ttsForm.append('action', 'tts');
@@ -93,7 +271,12 @@ export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
       setRecorder(mediaRecorder);
 
       // Auto-stop after 12 seconds (perfect length for shopping queries)
-      setTimeout(() => mediaRecorder.stop(), 12000);
+      setTimeout(() => mediaRecorder.state === 'recording' && mediaRecorder.stop(), 12000);
+
+
+
+
+
     } catch (err) {
       console.error('Mic error:', err);
       setMessages((prev) => [
@@ -104,11 +287,32 @@ export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  // Auto-start listening the moment the modal opens
+  
+  
+  
   useEffect(() => {
-    startRecording();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  startRecording();
+
+  // Cache the real voice the first time we have internet
+  if (navigator.onLine) {
+    cacheOfflineVoice();
+  }
+
+  // Also listen for when internet comes back
+  const handleOnline = () => cacheOfflineVoice();
+  window.addEventListener('online', handleOnline);
+
+  return () => window.removeEventListener('online', handleOnline);
+}, []);
+
+
+
+
+
+
+
+
+
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
