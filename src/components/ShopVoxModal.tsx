@@ -7,86 +7,107 @@ interface Message {
   content: string;
 }
 
-interface Props {
-  onClose: () => void;
-}
-
-export default function ShopVoxModal({ onClose }: Props) {
+export default function ShopVoxModal({ onClose }: { onClose: () => void }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
+  const [liveTranscript, setLiveTranscript] = useState('Listening…');
+  const [recorder, setRecorder] = useState<MediaRecorder | null>(null);
 
-  // This is the proper startVoice function – now lives here
-  const startVoice = async () => {
-    if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
-      alert('Voice not supported on this browser – try Chrome/Edge');
-      return;
-    }
+  // You can change this voice ID any time in ElevenLabs dashboard
+  const VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam – great South African-ish voice
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
+  const startRecording = async () => {
+    setIsListening(true);
+    setLiveTranscript('Listening…');
+    setMessages([]); // optional: clear old conversation
 
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-ZA';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      const chunks: Blob[] = [];
 
-    recognition.onstart = () => setIsListening(true);
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
 
-    recognition.onerror = (e) => {
-      console.error('Speech error:', e.error);
-      if (e.error === 'not-allowed') {
-        alert('Microphone access denied – please allow it in your browser settings');
-      }
-      setIsListening(false);
-    };
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
 
-    recognition.onresult = async (event) => {
-    let currentTranscript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-         const result = event.results[i];
-    if (result.isFinal) {
-      // FINAL: Append to chat once, clean
-      const finalText = Array.from(result)
-        .map(alt => alt.transcript)
-        .join(' ');
-      setTranscript(''); // Clear preview
-      setMessages(prev => [...prev, { role: 'user', content: finalText.trim() }]);
-      
-      // Grok ping + TTS (unchanged)
-      try {
-        const res = await fetch('/api/grok', {
+        // ─────── 1. Secure STT via our own /api/eleven route ───────
+        const sttForm = new FormData();
+        sttForm.append('action', 'stt');
+        sttForm.append('audio', audioBlob, 'query.webm');
+
+        const sttRes = await fetch('/api/eleven', {
+          method: 'POST',
+          body: sttForm,
+        });
+
+        const sttData = await sttRes.json();
+
+        if (!sttData.text?.trim()) {
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: "Sorry bru, didn't catch that – try again?" },
+          ]);
+          setIsListening(false);
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        const transcript = sttData.text.trim();
+        setLiveTranscript('');
+        setMessages((prev) => [...prev, { role: 'user', content: transcript }]);
+
+        // ─────── 2. Grok gets the transcript (and optional accent info) ───────
+        const grokRes = await fetch('/api/grok', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: finalText.trim() }),
+          body: JSON.stringify({
+            prompt: transcript,
+            metadata: { accent: sttData.language || 'en-ZA' },
+          }),
         });
-        const data = await res.json();
-        const assistantReply = data.reply || "Hmm, didn't quite catch that – try again?";
-        setMessages(prev => [...prev, { role: 'assistant', content: assistantReply }]);
-        
-        const utter = new SpeechSynthesisUtterance(assistantReply);
-        utter.lang = 'en-ZA';
-        utter.rate = 0.9;
-        window.speechSynthesis.speak(utter);
-      } catch (err) {
-        setMessages(prev => [...prev, { role: 'assistant', content: 'Network error – try again?' }]);
-      }
-    } else {
-      // INTERIM: Live preview only (no chat spam) – stitch all non-finals
-      currentTranscript += Array.from(result)
-        .map(alt => alt.transcript)
-        .join(' ');
-      setTranscript(currentTranscript); // Updates preview div
-    }
-  }
-};          
+        const { reply } = await grokRes.json();
 
-    recognition.onend = () => setIsListening(false);
-    recognition.start();
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply || 'Eish, no reply…' }]);
+
+        // ─────── 3. Secure TTS via our own /api/eleven route ───────
+        const ttsForm = new FormData();
+        ttsForm.append('action', 'tts');
+        ttsForm.append('text', reply);
+        ttsForm.append('voice_id', VOICE_ID);
+
+        const ttsRes = await fetch('/api/eleven', {
+          method: 'POST',
+          body: ttsForm,
+        });
+
+        const audioBlobTts = await ttsRes.blob();
+        const audioUrl = URL.createObjectURL(audioBlobTts);
+        new Audio(audioUrl).play();
+
+        setIsListening(false);
+        stream.getTracks().forEach((t) => t.stop());
+      };
+
+      mediaRecorder.start();
+      setRecorder(mediaRecorder);
+
+      // Auto-stop after 12 seconds (perfect length for shopping queries)
+      setTimeout(() => mediaRecorder.stop(), 12000);
+    } catch (err) {
+      console.error('Mic error:', err);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Microphone blocked – please allow it and try again.' },
+      ]);
+      setIsListening(false);
+    }
   };
 
-  // Auto-start listening when modal opens (feels magical)
+  // Auto-start listening the moment the modal opens
   useEffect(() => {
-    startVoice();
+    startRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -94,44 +115,42 @@ export default function ShopVoxModal({ onClose }: Props) {
       <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8 relative">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-2xl"
+          className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 text-3xl font-bold"
         >
-          Close
+          ×
         </button>
 
-        <h2 className="text-3xl font-bold text-center mb-6">Hey Vox, what can I get you?</h2>
+        <h2 className="text-3xl font-bold text-center mb-6 text-orange-600">
+          Hey Vox, what can I get you?
+        </h2>
 
         {isListening && (
           <div className="text-center text-red-600 font-bold animate-pulse text-xl mb-4">
-            Listening… speak now
+            {liveTranscript}
           </div>
         )}
 
-        {transcript && (
-          <div className="bg-blue-50 p-3 rounded-lg mb-4 italic text-sm">
-          Live: {transcript}...
-          </div>
-          )}
-
-        <div className="space-y-3 max-h-96 overflow-y-auto">
-          {messages.map((msg, i) => (
+        <div className="space-y-4 max-h-96 overflow-y-auto mb-6">
+          {messages.map((m, i) => (
             <div
               key={i}
-              className={`p-4 rounded-2xl ${
-                msg.role === 'user' ? 'bg-orange-100 ml-auto max-w-xs' : 'bg-gray-100 mr-auto max-w-md'
+              className={`p-4 rounded-2xl max-w-xs ${
+                m.role === 'user'
+                  ? 'bg-orange-100 ml-auto text-right'
+                  : 'bg-gray-100 mr-auto text-left'
               }`}
             >
-              {msg.content}
+              {m.content}
             </div>
           ))}
         </div>
 
-        {/* Manual retry button */}
         <button
-          onClick={startVoice}
-          className="mt-6 w-full py-4 bg-orange-600 text-white rounded-xl font-bold text-xl hover:bg-orange-700 transition"
+          onClick={startRecording}
+          disabled={isListening}
+          className="w-full py-5 bg-orange-600 text-white rounded-xl font-bold text-xl hover:bg-orange-700 disabled:opacity-50 transition"
         >
-          {isListening ? 'Listening…' : 'Tap to speak again'}
+          {isListening ? 'Recording… (12s)' : 'Tap to speak again'}
         </button>
       </div>
     </div>
