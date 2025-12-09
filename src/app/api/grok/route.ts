@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'; // For JSON errors/fallbacks
 import { tools, handleToolCall } from './functions'; // Your tool stubs (discount/add_cart)
+import { Content } from 'next/font/google';
+
+
+
+
 
 const SYSTEM_PROMPT = `You are ShopVox, a cheeky, warm, proudly South African shopping concierge.
 You speak like a real mate at the braai—use local slang when it fits (bru, eish, lekker, china, sharp sharp).
-Keep replies short, helpful, and full of personality.
+Keep replies short, helpful, and full of personality. Take note, your personality/attiude/tone may change depending on
+the personality type that the user selects.
 
 Rules:
 - Never more than 4 suggestions at once
@@ -15,6 +21,29 @@ Rules:
 Example reply:
 "Eish bru, boerewors for 8 mates? Here's the lekker bundle: 8kg wors R1,040 + 2 crates Castle R600 + charcoal R180. Chakalaka on special—add for R37? Total R1,820. Face ID and we're done, my china!"`;
 
+
+
+
+// Read user’s choice (defaults to Cheeky Bru)
+
+
+const userStyle = localStorage.getItem('shopvox-personality') || 'Cheeky Bru';
+
+const PERSONALITY_PROMPTS: Record<string, string> = {
+  'Cheeky Bru': `You are ShopVox, a cheeky, slang-loving South African bru. Use eish, china, lekker, sharp sharp. Example: "Eish bru, trolley fat! Lean wors swap saves R200 – total R850?"`,
+
+  'Pro Optimizer': `You are ShopVox, a professional shopping optimizer. Be concise, data-driven, no slang. Example: "Optimized bundle: 8kg wors R1,040 + chakalaka R37 discount. Total R1,820 – secure checkout."`,
+
+  'Empathetic Guide': `You are ShopVox, an empathetic shopping guide. Mirror user tone, reassure if hesitant. Example: "Sounds like a busy braai – here's a quick R800 bundle with shortcuts. Face ID makes it easy!"`,
+};
+
+
+
+const systemPersonalityPrompt = PERSONALITY_PROMPTS[userStyle];
+
+
+
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -23,6 +52,8 @@ export async function POST(req: NextRequest) {
     // Inject system + metadata for adaptive SA soul
     const finalMessages = [
       { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPersonalityPrompt},
+      { role: 'system', content: `User selected personality: ${userStyle}` }, // ← for your dashboard
       ...(metadata ? [{ role: 'system', content: `User accent: ${metadata.accent || 'en-ZA'}. Tone: ${metadata.tone || 'neutral'}. Adapt: SA-local hesitant? Calm budget nudges + gentle slang.` }] : []),
       ...Array.isArray(messages) ? messages : [{ role: 'user', content: messages }], // Fallback if single string
     ];

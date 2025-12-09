@@ -1,9 +1,33 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, cache } from 'react';
 import { getProducts } from '@/lib/cache';   
-
 import type { Dispatch, SetStateAction } from 'react';
+
+// Simple reply cache – lives on the phone
+const REPLY_CACHE = 'shopvox-reply-cache';
+const cacheReply = (question: string, answer: string) => {
+  const cache = JSON.parse(localStorage.getItem(REPLY_CACHE) || '{}');
+  cache[question.toLowerCase()] = { answer, timestamp: Date.now() };
+  // Keep only last 50 entries
+  const keys = Object.keys(cache).sort((a,b) => cache[b].timestamp - cache[a].timestamp).slice(0,50);
+  const trimmed: any = {};
+  keys.forEach(k => trimmed[k] = cache[k]);
+  localStorage.setItem(REPLY_CACHE, JSON.stringify(trimmed));
+};
+
+const getCachedReply = (question: string): string | null => {
+  const cache = JSON.parse(localStorage.getItem(REPLY_CACHE) || '{}');
+  return cache[question.toLowerCase()]?.answer || null;
+};
+
+
+
+
+
+
+
+
 
 interface Message {
   role: 'user' | 'assistant';
@@ -131,6 +155,17 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
   // You can change this voice ID any time in ElevenLabs dashboard
   const VOICE_ID = 'pNInz6obpgDQGcFmaJgB'; // Adam – great South African-ish voice
 
+
+
+useEffect(() => {
+  // Pre-warm ElevenLabs connection so first real call is faster
+  fetch('/api/eleven', { method: 'HEAD' }).catch(() => {});
+}, []);
+
+
+
+
+
   const startRecording = async () => {
     setIsListening(true); 
     setLiveTranscript('Listening…');
@@ -205,13 +240,34 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
         // ─────── 2. Grok gets the transcript ───────
         let reply = "Eish, something went wrong…";
 
+
+        //Check cache first - instant reply if we've seen this before.
+        const cached = getCachedReply(transcript);
+        if(cached) {
+          setMessages(prev => [...prev, { role: 'assistant', content: cached}]);
+          //still speak it. (the cache)
+          const ttsForm = new FormData();
+          ttsForm.append('action', 'tts');
+          ttsForm.append('text', cached);
+          ttsForm.append('voice_id', VOICE_ID);
+          const ttsRes = await fetch('/api/eleven', { method: 'POST', body: ttsForm });
+          const audioBlob = await ttsRes.blob();
+          new Audio(URL.createObjectURL(audioBlob)).play();
+          return;
+          
+        }
+
+
+
         try {
           const grokRes = await fetch('/api/grok', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt: transcript,
-              metadata: { accent: sttData.language || 'en-ZA' },
+              metadata: { accent: sttData.language || 'en-ZA',
+                          personality: localStorage.getItem('shopvox-personality') || 'Cheeky Bru'
+               },
             }),
           });
 
@@ -219,6 +275,7 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
 
           const data = await grokRes.json();
           reply = data.reply || "Didn't quite catch that, bro – try again?";
+
         } catch (err) {
           // ←←←←←←←←←←←← OFFLINE FALLBACK STARTS HERE ←←←←←←←←←←←←
           console.log('No internet – switching to offline cache');
@@ -242,7 +299,9 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
       
         
         
-        
+             //new reply cached next time
+            cacheReply(transcript, reply);
+
         
         
         
@@ -274,7 +333,7 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
       setTimeout(() => mediaRecorder.state === 'recording' && mediaRecorder.stop(), 12000);
 
 
-
+         
 
 
     } catch (err) {
@@ -287,7 +346,7 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
     }
   };
 
-  
+   
   
   
   useEffect(() => {
@@ -349,6 +408,40 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
           ))}
         </div>
 
+        {/*Personality Selector- let users pick their vibe */}
+        <div className="flex justify-center gap-3 mb-4">
+        {['Cheeky Bru', 'Pro Optimizer', 'Empathetic Guide'].map((style) => (
+        <button
+          key={style}
+          onClick={() => {
+          localStorage.setItem('shopvox-personality', style);
+          alert(`Switched to ${style} mode!`);
+          }}
+          className={`px-4 py-2 rounded-full text-sm font-medium transition ${
+          localStorage.getItem('shopvox-personality') === style
+          ? 'bg-orange-600 text-white'
+          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+         }`}
+        >
+           {style}
+           </button>
+          ))}
+        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         <button
           onClick={startRecording}
           disabled={isListening}
@@ -359,4 +452,8 @@ export default function ShopVoxModal({ messages, setMessages, onClose }: Props) 
       </div>
     </div>
   );
+
+  
+
+
 }
