@@ -118,34 +118,6 @@ useEffect(() => {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 export default function ShopVoxModal({ messages, setMessages, onClose }: Props) {
   
   const [isListening, setIsListening] = useState(false);
